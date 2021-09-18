@@ -6,22 +6,16 @@ const request = require('./util/request')
 const packageJSON = require('./package.json')
 const exec = require('child_process').exec
 const cache = require('apicache').middleware
+const Fly = require("flyio/src/node");
+const jwt = require('jsonwebtoken');
+const fly = new Fly;
 
-// version check
-exec('npm info NeteaseCloudMusicApi version', (err, stdout, stderr) => {
-  if(!err){
-    let version = stdout.trim()
-    if(packageJSON.version < version){
-      console.log(`最新版本: ${version}, 当前版本: ${packageJSON.version}, 请及时更新`)
-    }
-  }
-})
 
 const app = express()
 
 // CORS & Preflight request
 app.use((req, res, next) => {
-  if(req.path !== '/' && !req.path.includes('.')){
+  if (req.path !== '/' && !req.path.includes('.')) {
     res.set({
       'Access-Control-Allow-Credentials': true,
       'Access-Control-Allow-Origin': req.headers.origin || '*',
@@ -37,7 +31,7 @@ app.use((req, res, next) => {
 app.use((req, res, next) => {
   req.cookies = {}, (req.headers.cookie || '').split(/\s*;\s*/).forEach(pair => {
     let crack = pair.indexOf('=')
-    if(crack < 1 || crack == pair.length - 1) return
+    if (crack < 1 || crack == pair.length - 1) return
     req.cookies[decodeURIComponent(pair.slice(0, crack)).trim()] = decodeURIComponent(pair.slice(crack + 1)).trim()
   })
   next()
@@ -45,13 +39,45 @@ app.use((req, res, next) => {
 
 // body parser
 app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({extended: false}))
+app.use(bodyParser.urlencoded({ extended: false }))
 
 // cache
 app.use(cache('2 minutes', ((req, res) => res.statusCode === 200)))
 
 // static
 app.use(express.static(path.join(__dirname, 'public')))
+
+
+// 注册获取用户唯一标识的接口
+app.use('/getOpenId', async (req, res, next) => {
+  let code = req.query.code;
+  // console.log('code' + code)
+  let appId = 'wxfb3bce7b9035f9ea'
+  let appSecret = '0d2fd5dd0b0da67d158a3535d348eb30';
+  //发请求给微信服务器获取openId
+  let url = `https://api.weixin.qq.com/sns/jscode2session?appid=${appId}&secret=${appSecret}&js_code=${code}&grant_type=authorization_code`
+
+  let result = await fly.get(url);
+  // console.log(result)
+  let openId = JSON.parse(result.data).openid
+  console.log('openId', openId)
+  //自定义登录态
+  let person = {
+    username: 'xiaoli',
+    age: 18,
+    openId
+  }
+  // 对用户的数据进行加密，生成token返回给客户端
+  let token = jwt.sign(person, 'xili')
+  // res.send('测试数据')
+  console.log(token)
+  // let result2 = jwt.verify(token, 'xxx')
+  let result2 = jwt.verify(token, 'xili')
+  console.log(result2)
+  res.send(token)
+})
+
+
 
 // router
 const special = {
@@ -61,12 +87,18 @@ const special = {
 }
 
 fs.readdirSync(path.join(__dirname, 'module')).reverse().forEach(file => {
-  if(!file.endsWith('.js')) return
+  // console.log(file);
+  if (!file.endsWith('.js')) return
+  // album_newest.js  ---> /album_newest.js ---> /album_newest ---> /album/newest
   let route = (file in special) ? special[file] : '/' + file.replace(/\.js$/i, '').replace(/_/g, '/')
   let question = require(path.join(__dirname, 'module', file))
 
   app.use(route, (req, res) => {
-    let query = Object.assign({}, req.query, req.body, {cookie: req.cookies})
+    console.log(route);
+    console.log(req)
+    console.log('------');
+    console.log(req.cookies)
+    let query = Object.assign({}, req.query, req.body, { cookie: req.cookies })
     question(query, request)
       .then(answer => {
         console.log('[OK]', decodeURIComponent(req.originalUrl))
@@ -75,7 +107,7 @@ fs.readdirSync(path.join(__dirname, 'module')).reverse().forEach(file => {
       })
       .catch(answer => {
         console.log('[ERR]', decodeURIComponent(req.originalUrl))
-        if(answer.body.code == '301') answer.body.msg = '需要登录'
+        if (answer.body.code == '301') answer.body.msg = '需要登录'
         res.append('Set-Cookie', answer.cookie)
         res.status(answer.status).send(answer.body)
       })
@@ -86,7 +118,8 @@ const port = process.env.PORT || 3000
 const host = process.env.HOST || ''
 
 app.server = app.listen(port, host, () => {
-  console.log(`server running @ http://${host ? host : 'localhost'}:${port}`)
+  console.log('欢迎使用硅谷云音乐服务器');
+  console.log('服务器地址： http://localhost:3000')
 })
 
 module.exports = app
